@@ -108,6 +108,8 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:#0d1b2a;color:#e8eaf0;ov
 .leg-row:last-child{margin-bottom:0}
 .leg-dot{width:11px;height:11px;border-radius:50%;flex-shrink:0}
 .leg-ring{width:14px;height:14px;border-radius:50%;border:2px dashed;flex-shrink:0;background:transparent}
+#aerial-toggle-btn{padding:5px 12px;border-radius:6px;border:1px solid #2a4a6a;background:#0d2035;color:#6a9aba;font-size:.78rem;font-weight:600;cursor:pointer;transition:all .18s;white-space:nowrap}
+#aerial-toggle-btn.aerial{background:#1a4a3a;border-color:#2ea84f;color:#7adfa0}
 </style>
 </head>
 <body>
@@ -162,6 +164,7 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:#0d1b2a;color:#e8eaf0;ov
   <input type="text" id="search" placeholder="Search dealer name, city, or state&#8230;"/>
   <select id="state-filter"><option value="">All States</option></select>
   <span id="count"></span>
+  <button id="aerial-toggle-btn" title="Toggle aerial imagery">&#9728; Aerial</button>
 </div>
 
 <div id="map">
@@ -197,10 +200,16 @@ Object.entries(allData).forEach(([brand,arr]) => arr.forEach(d => d.brand = bran
 
 // ── MAP ──────────────────────────────────────────────────────
 const map = L.map('map', {center:[39.5,-98.5], zoom:4});
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
   attribution:'&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://openstreetmap.org">OSM</a>',
   maxZoom:19
-}).addTo(map);
+});
+const aerialLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  attribution:'&copy; <a href="https://www.esri.com/">Esri</a>',
+  maxZoom:19
+});
+let isAerial = false;
+darkLayer.addTo(map);
 
 // ── ICONS ─────────────────────────────────────────────────────
 function makeIcon(color) {
@@ -400,6 +409,20 @@ document.getElementById('close-btn').addEventListener('click', () => {
 });
 
 // ── INIT ──────────────────────────────────────────────────────
+document.getElementById('aerial-toggle-btn').addEventListener('click', function() {
+  isAerial = !isAerial;
+  if (isAerial) {
+    map.removeLayer(darkLayer);
+    aerialLayer.addTo(map);
+    this.classList.add('aerial');
+    this.textContent = 'Dark Map';
+  } else {
+    map.removeLayer(aerialLayer);
+    darkLayer.addTo(map);
+    this.classList.remove('aerial');
+    this.textContent = String.fromCharCode(9728) + ' Aerial';
+  }
+});
 populateStateFilter(getSource());
 applyFilters();
 </script>
