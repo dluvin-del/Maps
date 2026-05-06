@@ -110,9 +110,13 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:#0d1b2a;color:#e8eaf0;ov
 .leg-ring{width:14px;height:14px;border-radius:50%;border:2px dashed;flex-shrink:0;background:transparent}
 #aerial-toggle-btn{padding:5px 12px;border-radius:6px;border:1px solid #2a4a6a;background:#0d2035;color:#6a9aba;font-size:.78rem;font-weight:600;cursor:pointer;transition:all .18s;white-space:nowrap}
 #aerial-toggle-btn.aerial{background:#1a4a3a;border-color:#2ea84f;color:#7adfa0}
-#pivot-toggle-btn{padding:5px 12px;border-radius:6px;border:1px solid #2a4a6a;background:#0d2035;color:#6a9aba;font-size:.78rem;font-weight:600;cursor:pointer;transition:all .18s;white-space:nowrap}
-#pivot-toggle-btn.pivot-on{background:#0d2a3a;border-color:#00d4ff;color:#00d4ff}
-#pivot-toggle-btn:disabled{opacity:.55;cursor:wait}
+#choro-btn{padding:5px 12px;border-radius:6px;border:1px solid #2a4a6a;background:#0d2035;color:#6a9aba;font-size:.78rem;font-weight:600;cursor:pointer;transition:all .18s;white-space:nowrap}
+#choro-btn.choro-on{background:#0d2a1a;border-color:#6abf7a;color:#6abf7a}
+#choro-btn:disabled{opacity:.55;cursor:wait}
+#leg-choro{display:none;flex-direction:column;gap:2px;margin-top:4px;padding-top:4px;border-top:1px solid #2a4a6a}
+#leg-choro .choro-title{font-size:.63rem;color:#a0c0e0;margin-bottom:2px}
+.choro-swatch{display:flex;align-items:center;gap:6px;font-size:.62rem;color:#c8e6ff}
+.choro-box{width:12px;height:10px;border-radius:2px;flex-shrink:0}
 </style>
 </head>
 <body>
@@ -168,7 +172,7 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:#0d1b2a;color:#e8eaf0;ov
   <select id="state-filter"><option value="">All States</option></select>
   <span id="count"></span>
   <button id="aerial-toggle-btn" title="Toggle aerial imagery">&#9728; Aerial</button>
-  <button id="pivot-toggle-btn" title="Load center pivot irrigation from OpenStreetMap">&#9711; Pivots</button>
+  <button id="choro-btn" title="Show irrigated land by state (USDA 2017)">&#127807; Irrigated</button>
 </div>
 
 <div id="map">
@@ -176,6 +180,15 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:#0d1b2a;color:#e8eaf0;ov
     <div class="leg-row"><span class="leg-dot" style="background:#2ea84f"></span> Valley Irrigation</div>
     <div class="leg-row"><span class="leg-dot" style="background:#e07b20"></span> Zimmatic</div>
     <div class="leg-row"><span class="leg-dot" style="background:#a855f7"></span> Reinke</div>
+    <div id="leg-choro">
+      <div class="choro-title">Irrigated Acres (USDA 2017)</div>
+      <div class="choro-swatch"><span class="choro-box" style="background:#0d4a1a"></span> 5M+ acres</div>
+      <div class="choro-swatch"><span class="choro-box" style="background:#1a6e35"></span> 2–5M acres</div>
+      <div class="choro-swatch"><span class="choro-box" style="background:#2ea84f"></span> 1–2M acres</div>
+      <div class="choro-swatch"><span class="choro-box" style="background:#6abf7a"></span> 500k–1M</div>
+      <div class="choro-swatch"><span class="choro-box" style="background:#a8d8b0"></span> 100–500k</div>
+      <div class="choro-swatch"><span class="choro-box" style="background:#d4ead8"></span> &lt;100k acres</div>
+    </div>
     <div class="leg-row" id="leg-radius" style="display:none">
       <span class="leg-ring" id="leg-ring-swatch"></span>
       <span id="leg-label">10 mi radius</span>
@@ -427,54 +440,79 @@ document.getElementById('aerial-toggle-btn').addEventListener('click', function(
     this.textContent = String.fromCharCode(9728) + ' Aerial';
   }
 });
-// ── PIVOT LAYER (OpenStreetMap / Overpass) ──────────────────────────────
-const pivotLayer = L.layerGroup();
-let pivotsLoaded = false;
-let showPivots = false;
-
-async function loadPivots() {
-  const btn = document.getElementById('pivot-toggle-btn');
-  btn.textContent = String.fromCharCode(8987) + ' Loading...';
-  btn.disabled = true;
-  const query = '[out:json][timeout:90];(way["man_made"="pivot_irrigation"](24,-125,50,-65);node["man_made"="pivot_irrigation"](24,-125,50,-65);relation["man_made"="pivot_irrigation"](24,-125,50,-65););out center;';
-  try {
-    const res = await fetch('https://overpass-api.de/api/interpreter', {method:'POST', body:query});
-    const data = await res.json();
-    data.elements.forEach(el => {
-      const lat = el.lat != null ? el.lat : (el.center ? el.center.lat : null);
-      const lng = el.lon != null ? el.lon : (el.center ? el.center.lon : null);
-      if (lat == null || lng == null) return;
-      const name = (el.tags && el.tags.name) ? el.tags.name : 'Center Pivot';
-      L.circleMarker([lat, lng], {
-        radius:5, color:'#00d4ff', fillColor:'#00d4ff',
-        fillOpacity:0.45, weight:1.5, interactive:true
-      }).bindPopup('<b>' + name + '</b><br><small style="color:#a0c0e0">Center Pivot Irrigation<br>Source: OpenStreetMap</small>').addTo(pivotLayer);
-    });
-    pivotsLoaded = true;
-    showPivots = true;
-    pivotLayer.addTo(map);
-    btn.disabled = false;
-    btn.textContent = String.fromCharCode(9711) + ' Pivots (' + data.elements.length + ')';
-    btn.classList.add('pivot-on');
-    document.getElementById('leg-pivot').style.display = 'flex';
-  } catch(e) {
-    btn.disabled = false;
-    btn.textContent = String.fromCharCode(9711) + ' Pivots (error)';
-    console.error('Overpass error:', e);
-  }
+// ── IRRIGATED LAND CHOROPLETH (USDA NASS 2017 Census of Agriculture) ───────
+const irrigData = {
+  'Alabama':77,'Alaska':3,'Arizona':888,'Arkansas':4798,
+  'California':8712,'Colorado':3077,'Connecticut':15,
+  'Delaware':44,'Florida':1573,'Georgia':1088,
+  'Hawaii':85,'Idaho':3556,'Illinois':395,'Indiana':93,
+  'Iowa':282,'Kansas':2889,'Kentucky':54,'Louisiana':1516,
+  'Maine':17,'Maryland':105,'Massachusetts':30,'Michigan':380,
+  'Minnesota':330,'Mississippi':1254,'Missouri':742,
+  'Montana':2172,'Nebraska':8632,'Nevada':673,
+  'New Hampshire':5,'New Jersey':100,'New Mexico':744,
+  'New York':120,'North Carolina':340,'North Dakota':321,
+  'Ohio':100,'Oklahoma':842,'Oregon':1716,
+  'Pennsylvania':62,'Rhode Island':3,'South Carolina':175,
+  'South Dakota':444,'Tennessee':95,'Texas':5715,
+  'Utah':1087,'Vermont':8,'Virginia':75,
+  'Washington':1716,'West Virginia':8,'Wisconsin':462,
+  'Wyoming':1505
+};
+function getChoroColor(k) {
+  return k > 5000 ? '#0d4a1a' :
+         k > 2000 ? '#1a6e35' :
+         k > 1000 ? '#2ea84f' :
+         k > 500  ? '#6abf7a' :
+         k > 100  ? '#a8d8b0' : '#d4ead8';
 }
-
-document.getElementById('pivot-toggle-btn').addEventListener('click', function() {
-  if (!pivotsLoaded) { loadPivots(); return; }
-  showPivots = !showPivots;
-  if (showPivots) {
-    pivotLayer.addTo(map);
-    this.classList.add('pivot-on');
-    document.getElementById('leg-pivot').style.display = 'flex';
+const choroLayer = L.geoJSON(null, {
+  style: function(f) {
+    const k = irrigData[f.properties.name] || 0;
+    return {fillColor:getChoroColor(k), fillOpacity:0.5, color:'#0d1b2a', weight:0.5};
+  },
+  onEachFeature: function(f, l) {
+    const k = irrigData[f.properties.name] || 0;
+    const label = k >= 1000 ? (k/1000).toFixed(1) + 'M' : k + 'k';
+    l.bindTooltip('<b>' + f.properties.name + '</b><br>' + label + ' irrigated acres<br><small style="color:#a0c0e0">USDA 2017 Census of Agriculture</small>', {sticky:true});
+  }
+});
+let choroLoaded = false;
+let showChoro = false;
+document.getElementById('choro-btn').addEventListener('click', async function() {
+  if (!choroLoaded) {
+    this.textContent = String.fromCharCode(8987) + ' Loading...';
+    this.disabled = true;
+    try {
+      const res = await fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json');
+      const gj = await res.json();
+      choroLayer.addData(gj);
+      choroLoaded = true;
+      showChoro = true;
+      choroLayer.addTo(map);
+      choroLayer.bringToBack();
+      this.disabled = false;
+      this.classList.add('choro-on');
+      this.textContent = String.fromCharCode(127807) + ' Irrigated ON';
+      document.getElementById('leg-choro').style.display = 'flex';
+    } catch(e) {
+      this.disabled = false;
+      this.textContent = String.fromCharCode(127807) + ' Irrigated (error)';
+    }
+    return;
+  }
+  showChoro = !showChoro;
+  if (showChoro) {
+    choroLayer.addTo(map);
+    choroLayer.bringToBack();
+    this.classList.add('choro-on');
+    this.textContent = String.fromCharCode(127807) + ' Irrigated ON';
+    document.getElementById('leg-choro').style.display = 'flex';
   } else {
-    map.removeLayer(pivotLayer);
-    this.classList.remove('pivot-on');
-    document.getElementById('leg-pivot').style.display = 'none';
+    map.removeLayer(choroLayer);
+    this.classList.remove('choro-on');
+    this.textContent = String.fromCharCode(127807) + ' Irrigated';
+    document.getElementById('leg-choro').style.display = 'none';
   }
 });
 populateStateFilter(getSource());
