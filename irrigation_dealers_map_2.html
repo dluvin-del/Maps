@@ -510,52 +510,68 @@ async function loadCounties() {
   if (countiesLoaded || countiesLoading) return;
   countiesLoading = true;
   try {
-    const nassUrl = 'https://quickstats.nass.usda.gov/api/api_GET/?key=' + NASS_KEY +
-      '&source_desc=CENSUS&commodity_desc=AG+LAND' +
-      '&short_desc=AG+LAND%2C+IRRIGATED+-+ACRES' +
-      '&agg_level_desc=COUNTY&year=2017&format=JSON';
-    const [topoRes, nassRes] = await Promise.all([
-      fetch('https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json'),
-      fetch(nassUrl)
-    ]);
+    // Fetch geometry first — always works
+    const topoRes = await fetch('https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json');
     const topo = await topoRes.json();
-    const nassJson = await nassRes.json();
 
-    // Build FIPS → {acres, name} lookup
-    const countyData = {};
-    (nassJson.data || []).forEach(d => {
-      const fips = d.state_ansi.padStart(2,'0') + d.county_ansi.padStart(3,'0');
-      const raw = (d.Value || '').replace(/,/g,'');
-      const acres = parseFloat(raw);
-      countyData[fips] = {
-        acres: isNaN(acres) ? 0 : acres,
-        name: d.county_name + ' County, ' + d.state_name.charAt(0) + d.state_name.slice(1).toLowerCase()
-      };
-    });
+    // Try NASS API for real county data; fall back to state-level if CORS blocked
+    let countyData = {};
+    try {
+      const nassUrl = 'https://quickstats.nass.usda.gov/api/api_GET/?key=' + NASS_KEY +
+        '&source_desc=CENSUS&commodity_desc=AG+LAND' +
+        '&short_desc=AG+LAND%2C+IRRIGATED+-+ACRES' +
+        '&agg_level_desc=COUNTY&year=2017&format=JSON';
+      const nassRes = await fetch(nassUrl);
+      const nassJson = await nassRes.json();
+      (nassJson.data || []).forEach(d => {
+        const fips = d.state_ansi.padStart(2,'0') + d.county_ansi.padStart(3,'0');
+        const raw = (d.Value || '').replace(/,/g,'');
+        const acres = parseFloat(raw);
+        countyData[fips] = {
+          acres: isNaN(acres) ? 0 : acres,
+          name: d.county_name + ' County, ' + d.state_name.charAt(0) + d.state_name.slice(1).toLowerCase()
+        };
+      });
+    } catch(nassErr) {
+      console.warn('NASS API unavailable, using state-level fallback:', nassErr.message);
+    }
+
+    const nassHasData = Object.keys(countyData).length > 0;
 
     const geojson = topojson.feature(topo, topo.objects.counties);
     countyLayer = L.geoJSON(geojson, {
       style: f => {
         const fips = String(f.id).padStart(5,'0');
-        const acres = (countyData[fips] || {}).acres || 0;
+        let acres = 0;
+        if (nassHasData) {
+          acres = (countyData[fips] || {}).acres || 0;
+        } else {
+          // Fallback: inherit state-level value converted to per-county scale
+          const sname = fipsToState[fips.substring(0,2)] || '';
+          acres = ((irrigData[sname] || 0) * 1000) / 80;
+        }
         return {fillColor:getCountyColor(acres), fillOpacity:0.6, color:'#0d1b2a', weight:0.3};
       },
       onEachFeature: (f, l) => {
         const fips = String(f.id).padStart(5,'0');
-        const cd = countyData[fips];
-        const name = cd ? cd.name : 'Unknown County';
-        const acres = cd ? cd.acres : 0;
-        const label = acres >= 1000 ? Math.round(acres).toLocaleString() + ' acres' : acres > 0 ? acres.toLocaleString() + ' acres' : 'No data';
-        l.bindTooltip('<b>' + name + '</b><br>' + label + ' irrigated<br><small style="color:#a0c0e0">USDA NASS 2017 Census</small>', {sticky:true});
+        const sname = fipsToState[fips.substring(0,2)] || '';
+        let name, acres, source;
+        if (nassHasData && countyData[fips]) {
+          name = countyData[fips].name;
+          acres = countyData[fips].acres;
+          source = 'USDA NASS 2017 Census';
+        } else {
+          name = sname + ' (county)';
+          acres = ((irrigData[sname] || 0) * 1000) / 80;
+          source = 'State avg — USDA 2017';
+        }
+        const label = acres >= 1000 ? Math.round(acres).toLocaleString() + ' acres' : acres > 0 ? Math.round(acres).toLocaleString() + ' acres' : 'No data';
+        l.bindTooltip('<b>' + name + '</b><br>' + label + ' irrigated<br><small style="color:#a0c0e0">' + source + '</small>', {sticky:true});
       }
     });
     countiesLoaded = true;
     countiesLoading = false;
-    if (showChoro && map.getZoom() >= 5) {
-      if (map.hasLayer(choroLayer)) map.removeLayer(choroLayer);
-      countyLayer.addTo(map).bringToBack();
-      updateChoroLegend(true);
-    }
+    if (showChoro && map.getZoom() >= 5) showCountyLayer();
   } catch(e) {
     countiesLoading = false;
     console.error('County load error:', e);
@@ -584,15 +600,23 @@ function updateChoroLegend(isCounty) {
   }
 }
 
+function showStateLayer() {
+  if (!map.hasLayer(choroLayer)) choroLayer.addTo(map).bringToBack();
+  if (countiesLoaded && countyLayer && map.hasLayer(countyLayer)) map.removeLayer(countyLayer);
+  updateChoroLegend(false);
+}
+function showCountyLayer() {
+  if (map.hasLayer(choroLayer)) map.removeLayer(choroLayer);
+  if (!map.hasLayer(countyLayer)) countyLayer.addTo(map).bringToBack();
+  updateChoroLegend(true);
+}
 function syncChoroLayers() {
   if (!showChoro) return;
   if (map.getZoom() >= 5) {
-    if (!countiesLoaded) { loadCounties(); return; }
-    if (map.hasLayer(choroLayer)) map.removeLayer(choroLayer);
-    if (!map.hasLayer(countyLayer)) { countyLayer.addTo(map).bringToBack(); updateChoroLegend(true); }
+    if (countiesLoaded && countyLayer) { showCountyLayer(); }
+    else { showStateLayer(); if (!countiesLoaded) loadCounties(); }
   } else {
-    if (countiesLoaded && map.hasLayer(countyLayer)) { map.removeLayer(countyLayer); updateChoroLegend(false); }
-    if (!map.hasLayer(choroLayer)) choroLayer.addTo(map).bringToBack();
+    showStateLayer();
   }
 }
 map.on('zoomend', syncChoroLayers);
@@ -613,7 +637,8 @@ document.getElementById('choro-btn').addEventListener('click', async function() 
       this.classList.add('choro-on');
       this.textContent = String.fromCharCode(127807)+' Irrigated ON';
       document.getElementById('leg-choro').style.display = 'flex';
-      syncChoroLayers();
+      showStateLayer();
+      if (map.getZoom() >= 5) loadCounties();
     } catch(e) {
       this.disabled = false;
       this.textContent = String.fromCharCode(127807)+' Irrigated (error)';
@@ -628,7 +653,7 @@ document.getElementById('choro-btn').addEventListener('click', async function() 
     syncChoroLayers();
   } else {
     if (map.hasLayer(choroLayer)) map.removeLayer(choroLayer);
-    if (countiesLoaded && map.hasLayer(countyLayer)) map.removeLayer(countyLayer);
+    if (countiesLoaded && countyLayer && map.hasLayer(countyLayer)) map.removeLayer(countyLayer);
     this.classList.remove('choro-on');
     this.textContent = String.fromCharCode(127807)+' Irrigated';
     document.getElementById('leg-choro').style.display = 'none';
