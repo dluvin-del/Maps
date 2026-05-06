@@ -423,6 +423,56 @@ document.getElementById('aerial-toggle-btn').addEventListener('click', function(
     this.textContent = String.fromCharCode(9728) + ' Aerial';
   }
 });
+// ── PIVOT LAYER (OpenStreetMap / Overpass) ──────────────────────────────
+const pivotLayer = L.layerGroup();
+let pivotsLoaded = false;
+let showPivots = false;
+
+async function loadPivots() {
+  const btn = document.getElementById('pivot-toggle-btn');
+  btn.textContent = String.fromCharCode(8987) + ' Loading...';
+  btn.disabled = true;
+  const query = '[out:json][timeout:90];(way["man_made"="pivot_irrigation"](24,-125,50,-65);node["man_made"="pivot_irrigation"](24,-125,50,-65);relation["man_made"="pivot_irrigation"](24,-125,50,-65););out center;';
+  try {
+    const res = await fetch('https://overpass-api.de/api/interpreter', {method:'POST', body:query});
+    const data = await res.json();
+    data.elements.forEach(el => {
+      const lat = el.lat != null ? el.lat : (el.center ? el.center.lat : null);
+      const lng = el.lon != null ? el.lon : (el.center ? el.center.lon : null);
+      if (lat == null || lng == null) return;
+      const name = (el.tags && el.tags.name) ? el.tags.name : 'Center Pivot';
+      L.circleMarker([lat, lng], {
+        radius:5, color:'#00d4ff', fillColor:'#00d4ff',
+        fillOpacity:0.45, weight:1.5, interactive:true
+      }).bindPopup('<b>' + name + '</b><br><small style="color:#a0c0e0">Center Pivot Irrigation<br>Source: OpenStreetMap</small>').addTo(pivotLayer);
+    });
+    pivotsLoaded = true;
+    showPivots = true;
+    pivotLayer.addTo(map);
+    btn.disabled = false;
+    btn.textContent = String.fromCharCode(9711) + ' Pivots (' + data.elements.length + ')';
+    btn.classList.add('pivot-on');
+    document.getElementById('leg-pivot').style.display = 'flex';
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = String.fromCharCode(9711) + ' Pivots (error)';
+    console.error('Overpass error:', e);
+  }
+}
+
+document.getElementById('pivot-toggle-btn').addEventListener('click', function() {
+  if (!pivotsLoaded) { loadPivots(); return; }
+  showPivots = !showPivots;
+  if (showPivots) {
+    pivotLayer.addTo(map);
+    this.classList.add('pivot-on');
+    document.getElementById('leg-pivot').style.display = 'flex';
+  } else {
+    map.removeLayer(pivotLayer);
+    this.classList.remove('pivot-on');
+    document.getElementById('leg-pivot').style.display = 'none';
+  }
+});
 populateStateFilter(getSource());
 applyFilters();
 </script>
