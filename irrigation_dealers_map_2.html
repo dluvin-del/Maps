@@ -206,6 +206,7 @@ body{font-family:'Segoe UI',Arial,sans-serif;background:#0d1b2a;color:#e8eaf0;ov
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson@3/dist/topojson.min.js"></script>
 <script>
 // ── DATA ─────────────────────────────────────────────────────
 const allData = {
@@ -459,6 +460,19 @@ const irrigData = {
   'Washington':1716,'West Virginia':8,'Wisconsin':462,
   'Wyoming':1505
 };
+const fipsToState = {
+  '01':'Alabama','02':'Alaska','04':'Arizona','05':'Arkansas','06':'California',
+  '08':'Colorado','09':'Connecticut','10':'Delaware','12':'Florida','13':'Georgia',
+  '15':'Hawaii','16':'Idaho','17':'Illinois','18':'Indiana','19':'Iowa',
+  '20':'Kansas','21':'Kentucky','22':'Louisiana','23':'Maine','24':'Maryland',
+  '25':'Massachusetts','26':'Michigan','27':'Minnesota','28':'Mississippi',
+  '29':'Missouri','30':'Montana','31':'Nebraska','32':'Nevada','33':'New Hampshire',
+  '34':'New Jersey','35':'New Mexico','36':'New York','37':'North Carolina',
+  '38':'North Dakota','39':'Ohio','40':'Oklahoma','41':'Oregon','42':'Pennsylvania',
+  '44':'Rhode Island','45':'South Carolina','46':'South Dakota','47':'Tennessee',
+  '48':'Texas','49':'Utah','50':'Vermont','51':'Virginia','53':'Washington',
+  '54':'West Virginia','55':'Wisconsin','56':'Wyoming'
+};
 function getChoroColor(k) {
   return k > 5000 ? '#0d4a1a' :
          k > 2000 ? '#1a6e35' :
@@ -466,22 +480,72 @@ function getChoroColor(k) {
          k > 500  ? '#6abf7a' :
          k > 100  ? '#a8d8b0' : '#d4ead8';
 }
+function choroTooltip(name, k) {
+  const label = k >= 1000 ? (k/1000).toFixed(1)+'M' : k+'k';
+  return '<b>'+name+'</b><br>'+label+' irrigated acres<br><small style="color:#a0c0e0">USDA 2017 Census of Agriculture</small>';
+}
+
+// State layer (zoom < 5)
 const choroLayer = L.geoJSON(null, {
-  style: function(f) {
-    const k = irrigData[f.properties.name] || 0;
-    return {fillColor:getChoroColor(k), fillOpacity:0.5, color:'#0d1b2a', weight:0.5};
-  },
-  onEachFeature: function(f, l) {
-    const k = irrigData[f.properties.name] || 0;
-    const label = k >= 1000 ? (k/1000).toFixed(1) + 'M' : k + 'k';
-    l.bindTooltip('<b>' + f.properties.name + '</b><br>' + label + ' irrigated acres<br><small style="color:#a0c0e0">USDA 2017 Census of Agriculture</small>', {sticky:true});
-  }
+  style: f => { const k=irrigData[f.properties.name]||0; return {fillColor:getChoroColor(k),fillOpacity:0.5,color:'#0d1b2a',weight:0.5}; },
+  onEachFeature: (f,l) => { const k=irrigData[f.properties.name]||0; l.bindTooltip(choroTooltip(f.properties.name,k),{sticky:true}); }
 });
+
+// County layer (zoom >= 5) — loaded on demand from us-atlas TopoJSON
+let countyLayer = null;
+let countiesLoaded = false;
+let countiesLoading = false;
+
+async function loadCounties() {
+  if (countiesLoaded || countiesLoading) return;
+  countiesLoading = true;
+  try {
+    const res = await fetch('https://cdn.jsdelivr.net/npm/us-atlas@3/counties-10m.json');
+    const topo = await res.json();
+    const geojson = topojson.feature(topo, topo.objects.counties);
+    countyLayer = L.geoJSON(geojson, {
+      style: f => {
+        const sfips = String(f.id).padStart(5,'0').substring(0,2);
+        const k = irrigData[fipsToState[sfips]]||0;
+        return {fillColor:getChoroColor(k),fillOpacity:0.55,color:'#0d1b2a',weight:0.3};
+      },
+      onEachFeature: (f,l) => {
+        const sfips = String(f.id).padStart(5,'0').substring(0,2);
+        const sname = fipsToState[sfips]||'';
+        const k = irrigData[sname]||0;
+        l.bindTooltip(choroTooltip(sname,k),{sticky:true});
+      }
+    });
+    countiesLoaded = true;
+    countiesLoading = false;
+    if (showChoro && map.getZoom() >= 5) {
+      if (map.hasLayer(choroLayer)) map.removeLayer(choroLayer);
+      countyLayer.addTo(map).bringToBack();
+    }
+  } catch(e) {
+    countiesLoading = false;
+    console.error('County load error:', e);
+  }
+}
+
+function syncChoroLayers() {
+  if (!showChoro) return;
+  if (map.getZoom() >= 5) {
+    if (!countiesLoaded) { loadCounties(); return; }
+    if (map.hasLayer(choroLayer)) map.removeLayer(choroLayer);
+    if (!map.hasLayer(countyLayer)) countyLayer.addTo(map).bringToBack();
+  } else {
+    if (countiesLoaded && map.hasLayer(countyLayer)) map.removeLayer(countyLayer);
+    if (!map.hasLayer(choroLayer)) choroLayer.addTo(map).bringToBack();
+  }
+}
+map.on('zoomend', syncChoroLayers);
+
 let choroLoaded = false;
 let showChoro = false;
 document.getElementById('choro-btn').addEventListener('click', async function() {
   if (!choroLoaded) {
-    this.textContent = String.fromCharCode(8987) + ' Loading...';
+    this.textContent = String.fromCharCode(8987)+' Loading...';
     this.disabled = true;
     try {
       const res = await fetch('https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json');
@@ -489,29 +553,28 @@ document.getElementById('choro-btn').addEventListener('click', async function() 
       choroLayer.addData(gj);
       choroLoaded = true;
       showChoro = true;
-      choroLayer.addTo(map);
-      choroLayer.bringToBack();
       this.disabled = false;
       this.classList.add('choro-on');
-      this.textContent = String.fromCharCode(127807) + ' Irrigated ON';
+      this.textContent = String.fromCharCode(127807)+' Irrigated ON';
       document.getElementById('leg-choro').style.display = 'flex';
+      syncChoroLayers();
     } catch(e) {
       this.disabled = false;
-      this.textContent = String.fromCharCode(127807) + ' Irrigated (error)';
+      this.textContent = String.fromCharCode(127807)+' Irrigated (error)';
     }
     return;
   }
   showChoro = !showChoro;
   if (showChoro) {
-    choroLayer.addTo(map);
-    choroLayer.bringToBack();
     this.classList.add('choro-on');
-    this.textContent = String.fromCharCode(127807) + ' Irrigated ON';
+    this.textContent = String.fromCharCode(127807)+' Irrigated ON';
     document.getElementById('leg-choro').style.display = 'flex';
+    syncChoroLayers();
   } else {
-    map.removeLayer(choroLayer);
+    if (map.hasLayer(choroLayer)) map.removeLayer(choroLayer);
+    if (countiesLoaded && map.hasLayer(countyLayer)) map.removeLayer(countyLayer);
     this.classList.remove('choro-on');
-    this.textContent = String.fromCharCode(127807) + ' Irrigated';
+    this.textContent = String.fromCharCode(127807)+' Irrigated';
     document.getElementById('leg-choro').style.display = 'none';
   }
 });
